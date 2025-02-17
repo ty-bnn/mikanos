@@ -1,0 +1,3 @@
+[submodule "mikan"]
+	path = mikan
+	url = git@github.com:uchan-nos/mikanos.git
