@@ -6,6 +6,7 @@
 #include  <Protocol/SimpleFileSystem.h>
 #include  <Protocol/DiskIo2.h>
 #include  <Protocol/BlockIo.h>
+#include  <Guid/FileInfo.h>
 
 struct MemoryMap {
   UINTN buffer_size; // MemoryMapを保存するために予め確保しておくメモリのサイズ
@@ -131,6 +132,68 @@ EFI_STATUS EFIAPI UefiMain(
 
   SaveMemoryMap(&memmap, memmap_file);
   memmap_file->Close(memmap_file);
+
+  // UEFIの機能を使ってカーネルのファイルを読み込みメモリに配置する
+  EFI_FILE_PROTOCOL* kernel_file;
+  root_dir->Open(
+      root_dir, &kernel_file, L"\\kernel.elf",
+      EFI_FILE_MODE_READ, 0);
+  
+  /*
+  * 予めカーネルファイルの情報をメモリにロードし、その情報を元にファイル全体を読み込む
+  * sizeof(CHAR16)*12: kernel.elfという名前の文字数（null文字を含む）
+  */
+  UINTN file_info_size = sizeof(EFI_FILE_INFO) + sizeof(CHAR16) * 12;
+  UINT8 file_info_buffer[file_info_size];
+  kernel_file->GetInfo(
+      kernel_file, &gEfiFileInfoGuid,
+      &file_info_size, file_info_buffer);
+
+  EFI_FILE_INFO* file_info = (EFI_FILE_INFO*)file_info_buffer;
+  UINTN kernel_file_size = file_info->FileSize;
+
+  /*
+  * カーネルファイルを格納する領域をページ単位で確保
+  * ここでは1ページ1KiB(0x1000)
+  * 0xfffを足しているのはファイルの端もページに含めるため
+  * カーネルの開始地点は0x100000に固定しており、UEFIのMemoryMapから使用可能な領域を設定
+  */
+  EFI_PHYSICAL_ADDRESS kernel_base_addr = 0x100000;
+  gBS->AllocatePages(
+      AllocateAddress, EfiLoaderData,
+      (kernel_file_size + 0xfff) / 0x1000, &kernel_base_addr);
+  kernel_file->Read(kernel_file, &kernel_file_size, (VOID*)kernel_base_addr);
+  Print(L"Kernel: 0x%0lx (%lu bytes)\n", kernel_base_addr, kernel_file_size);
+
+  /*
+  * カーネルに動作を委譲し、UEFIをストップ
+  * もしExitBootServicesに失敗したらMemoryMapのmap_keyを計算し直して再トライ
+  */
+  EFI_STATUS status;
+  status = gBS->ExitBootServices(image_handle, memmap.map_key);
+  if (EFI_ERROR(status)) {
+    status = GetMemoryMap(&memmap);
+    if (EFI_ERROR(status)) {
+      Print(L"failed to get memory map: %r\n", status);
+      while (1);
+    }
+    status = gBS->ExitBootServices(image_handle, memmap.map_key);
+    if (EFI_ERROR(status)) {
+      Print(L"Could not exit boot service: %r\n", status);
+      while (1);
+    }
+  }
+
+  /*
+  * kernel.elfからカーネルのエントリーポイントのアドレスを探す
+  * elfファイルの開始地点から24バイト目にアドレスが記載されている
+  */
+  UINT64 entry_addr = *(UINT64*)(kernel_base_addr + 24);
+
+  // C言語の仕様によりentry_addrを関数定義でキャストしないと関数Callできない
+  typedef void EntryPointType(void);
+  EntryPointType* entry_point = (EntryPointType*)entry_addr;
+  entry_point();
 
   Print(L"All done\n");
 
