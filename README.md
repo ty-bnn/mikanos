@@ -10,8 +10,9 @@ Self-Made Operating System by Mikan OS!!
 
 ## How to build Kernel
 
-1. `clang++ -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone -fno-exceptions -fno-rtti -std=c++17 -c main.cpp`
-2. `ld.lld --entry KernelMain -z norelro --image-base 0x100000 --static -o kernel.elf main.o`
+1. `source $HOME/osbook/devenv/buildenv.sh`
+2. `clang++ $CPPFLAGS -O2 -Wall -g --target=x86_64-elf -ffreestanding -mno-red-zone -fno-exceptions -fno-rtti -std=c++17 -c main.cpp`
+3. `ld.lld --entry KernelMain -z norelro --image-base 0x100000 --static -o kernel.elf main.o`
 
 ## How to Run BootLoader and Kernel on QEMU
 
