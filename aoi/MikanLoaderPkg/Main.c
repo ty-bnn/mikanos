@@ -3,12 +3,14 @@
 #include  <Library/UefiBootServicesTableLib.h>
 #include  <Library/PrintLib.h>
 #include  <Library/MemoryAllocationLib.h>
+#include  <Library/BaseMemoryLib.h>
 #include  <Protocol/LoadedImage.h>
 #include  <Protocol/SimpleFileSystem.h>
 #include  <Protocol/DiskIo2.h>
 #include  <Protocol/BlockIo.h>
 #include  <Guid/FileInfo.h>
 #include  "frame_buffer_config.hpp"
+#include "elf.hpp"
 
 struct MemoryMap {
   UINTN buffer_size; // MemoryMapを保存するために予め確保しておくメモリのサイズ
@@ -159,6 +161,42 @@ void Halt(void) {
   while (1) __asm__("hlt");
 }
 
+/**
+ * ELFファイルの全LOADセグメントを含む領域を確認する
+ * プログラムヘッダに存在する全てのLOADセグメントの情報を確認し、
+ * 最小の開始アドレスと最大の終了アドレスを計算する
+ */
+void CalcLoadAddressRange(Elf64_Ehdr* ehdr, UINT64* first, UINT64* last) {
+  Elf64_Phdr* phdr = (Elf64_Phdr*)((UINT64)ehdr + ehdr->e_phoff);
+  *first = MAX_UINT64;
+  *last = 0;
+  // プログラムヘッダにはELFファイルに含まれる各セクションのヘッダ情報が連続して格納されている
+  // Elf64_Phdrはその要素である
+  for (Elf64_Half i = 0; i < ehdr->e_phnum; ++i) {
+    if (phdr[i].p_type != PT_LOAD) continue;
+    *first = MIN(*first, phdr[i].p_vaddr);
+    *last = MAX(*last, phdr[i].p_vaddr + phdr[i].p_memsz);
+  }
+}
+
+/**
+ * ELFファイルのLOADセグメントを該当のメモリ領域にコピーする
+ */
+void CopyLoadSegments(Elf64_Ehdr* ehdr) {
+  Elf64_Phdr* phdr = (Elf64_Phdr*)((UINT64)ehdr + ehdr->e_phoff);
+  for (Elf64_Half i = 0; i < ehdr->e_phnum; ++i) {
+    if (phdr[i].p_type != PT_LOAD) continue;
+
+    // ELFファイルに既に存在する領域をコピー
+    UINT64 segm_in_file = (UINT64)ehdr + phdr[i].p_offset;
+    CopyMem((VOID*)phdr[i].p_vaddr, (VOID*)segm_in_file, phdr[i].p_filesz);
+
+    // ELFファイルに存在しないが追加でメモリ上に確保する必要のある領域を確保
+    UINTN remain_bytes = phdr[i].p_memsz - phdr[i].p_filesz;
+    SetMem((VOID*)(phdr[i].p_vaddr + phdr[i].p_filesz), remain_bytes, 0);
+  }
+}
+
 EFI_STATUS EFIAPI UefiMain(
     EFI_HANDLE image_handle,
     EFI_SYSTEM_TABLE *system_table) {
@@ -248,24 +286,43 @@ EFI_STATUS EFIAPI UefiMain(
   EFI_FILE_INFO* file_info = (EFI_FILE_INFO*)file_info_buffer;
   UINTN kernel_file_size = file_info->FileSize;
 
-  // カーネルファイルを格納する領域をページ単位で確保
-  // ここでは1ページ1KiB(0x1000)
-  // 0xfffを足しているのはファイルの端もページに含めるため
-  // カーネルの開始地点は0x100000に固定しており、UEFIのMemoryMapから使用可能な領域を設定
-  EFI_PHYSICAL_ADDRESS kernel_base_addr = 0x100000;
-  status = gBS->AllocatePages(
-      AllocateAddress, EfiLoaderData,
-      (kernel_file_size + 0xfff) / 0x1000, &kernel_base_addr);
+  // 一時的にカーネルファイルを書き込む場所を確保
+  // AllocatePool: バイト単位でメモリ上の領域を確保。開始アドレスは必要ない。
+  VOID* kernel_buffer;
+  status = gBS->AllocatePool(EfiLoaderData, kernel_file_size, &kernel_buffer);
   if (EFI_ERROR(status)) {
-    Print(L"failed to allocate pages: %r", status);
+    Print(L"failed to allocate pool: %r\n", status);
     Halt();
   }
-  status = kernel_file->Read(kernel_file, &kernel_file_size, (VOID*)kernel_base_addr);
+  status = kernel_file->Read(kernel_file, &kernel_file_size, kernel_buffer);
   if (EFI_ERROR(status)) {
     Print(L"error: %r", status);
     Halt();
   }
-  Print(L"Kernel: 0x%0lx (%lu bytes)\n", kernel_base_addr, kernel_file_size);
+
+  // カーネルファイルを確保した先頭の領域をファイルヘッダの領域として使用できるようにキャスト
+  Elf64_Ehdr* kernel_ehdr = (Elf64_Ehdr*)kernel_buffer;
+  UINT64 kernel_first_addr, kernel_last_addr;
+  CalcLoadAddressRange(kernel_ehdr, &kernel_first_addr, &kernel_last_addr);
+
+  UINTN num_pages = (kernel_last_addr - kernel_first_addr + 0xfff) / 0x1000;
+  status = gBS->AllocatePages(AllocateAddress, EfiLoaderData,
+                              num_pages, &kernel_first_addr);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to allocate pages: %r\n", status);
+    Halt();
+  }
+
+  // 一時領域に格納したカーネルファイルからLOADセグメントのみをメモリ上に書き出す
+  CopyLoadSegments(kernel_ehdr);
+  Print(L"Kernel: 0x%0lx - 0x%0lx\n", kernel_first_addr, kernel_last_addr);
+
+  // 一時的に確保したカーネルファイル用の領域を解放
+  status = gBS->FreePool(kernel_buffer);
+  if (EFI_ERROR(status)) {
+    Print(L"failed to free pool: %r\n", status);
+    Halt();
+  }
 
   // カーネルに動作を委譲し、UEFIをストップ
   // もしExitBootServicesに失敗したらMemoryMapのmap_keyを計算し直して再トライ
@@ -284,8 +341,7 @@ EFI_STATUS EFIAPI UefiMain(
   }
 
   // kernel.elfからカーネルのエントリーポイントのアドレスを探す
-  // elfファイルの開始地点から24バイト目にアドレスが記載されている
-  UINT64 entry_addr = *(UINT64*)(kernel_base_addr + 24);
+  UINT64 entry_addr = *(UINT64*)(kernel_first_addr + 24);
 
   struct FrameBufferConfig config = {
     (UINT8*)gop->Mode->FrameBufferBase,

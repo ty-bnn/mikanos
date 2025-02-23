@@ -1,0 +1,1 @@
+/workspaces/mikanos/aoi/kernel/elf.hpp
