@@ -2,3 +2,4 @@
 *.elf
 mnt/
 disk.img
+*.d
