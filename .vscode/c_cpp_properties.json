@@ -4,13 +4,15 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
+                "/home/vscode/osbook/devenv/x86_64-elf/**",
+                "/usr/x86_64-linux-gnu/**",
                 "/home/vscode/edk2/**"
             ],
             "defines": [],
-            "compilerPath": "/usr/bin/clang",
+            "compilerPath": "/usr/bin/clang --target=x86_64-linux-gnu",
             "cStandard": "c17",
             "cppStandard": "c++14",
-            "intelliSenseMode": "linux-clang-arm64"
+            "intelliSenseMode": "linux-clang-x64"
         }
     ],
     "version": 4

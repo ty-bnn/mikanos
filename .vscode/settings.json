@@ -2,6 +2,10 @@
     "files.associations": {
         "uefi.h": "c",
         "uefilib.h": "c",
-        "frame_buffer_config.hpp": "c"
+        "frame_buffer_config.hpp": "c",
+        "cstdio": "cpp",
+        "cstddef": "cpp",
+        "cstdint": "cpp",
+        "types.h": "c"
     }
 }
