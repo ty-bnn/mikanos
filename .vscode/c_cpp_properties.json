@@ -6,7 +6,9 @@
                 "${workspaceFolder}/**",
                 "/home/vscode/osbook/devenv/x86_64-elf/**",
                 "/usr/x86_64-linux-gnu/**",
-                "/home/vscode/edk2/**"
+                "/home/vscode/edk2/**",
+                "/usr/include/**",
+                "/usr/lib/llvm-7/lib/clang/7.0.1/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/clang --target=x86_64-linux-gnu",

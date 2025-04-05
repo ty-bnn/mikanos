@@ -6,6 +6,7 @@
         "cstdio": "cpp",
         "cstddef": "cpp",
         "cstdint": "cpp",
-        "types.h": "c"
+        "types.h": "c",
+        "cstdarg": "cpp"
     }
 }
