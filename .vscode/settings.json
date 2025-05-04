@@ -7,6 +7,8 @@
         "cstddef": "cpp",
         "cstdint": "cpp",
         "types.h": "c",
-        "cstdarg": "cpp"
+        "cstdarg": "cpp",
+        "array": "cpp",
+        "system_error": "cpp"
     }
 }

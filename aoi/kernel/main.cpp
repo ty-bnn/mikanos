@@ -8,50 +8,24 @@
 #include <cstddef>
 #include <cstdio>
 
+#include <numeric>
+#include <vector>
+
 #include "frame_buffer_config.hpp"
 #include "graphics.hpp"
+#include "mouse.hpp"
 #include "font.hpp"
 #include "console.hpp"
 #include "pci.hpp"
-
-/**
- * deleteを宣言しないとコンパイルエラー
- */
-void operator delete(void* obj) noexcept {
-}
+#include "logger.hpp"
+#include "usb/memory.hpp"
+#include "usb/device.hpp"
+#include "usb/classdriver/mouse.hpp"
+#include "usb/xhci/xhci.hpp"
+#include "usb/xhci/trb.hpp"
 
 const PixelColor kDesktopBGColor{45, 118, 237};
 const PixelColor kDesktopFGColor{255, 255, 255};
-
-// #@@range_begin(mosue_cursor_shape)
-const int kMouseCursorWidth = 15;
-const int kMouseCursorHeight = 24;
-const char mouse_cursor_shape[kMouseCursorHeight][kMouseCursorWidth + 1] = {
-  "@              ",
-  "@@             ",
-  "@.@            ",
-  "@..@           ",
-  "@...@          ",
-  "@....@         ",
-  "@.....@        ",
-  "@......@       ",
-  "@.......@      ",
-  "@........@     ",
-  "@.........@    ",
-  "@..........@   ",
-  "@...........@  ",
-  "@............@ ",
-  "@......@@@@@@@@",
-  "@......@       ",
-  "@....@@.@      ",
-  "@...@ @.@      ",
-  "@..@   @.@     ",
-  "@.@    @.@     ",
-  "@@      @.@    ",
-  "@       @.@    ",
-  "         @.@   ",
-  "         @@@   ",
-};
 
 /**
  * 予めPixelWriterを格納する領域を確保しておく
@@ -78,6 +52,34 @@ int printk(const char* format, ...) {
 
   console->PutString(s);
   return result;
+}
+
+char mouse_cursor_buf[sizeof(MouseCursor)];
+MouseCursor* mouse_cursor;
+
+void MouseObserver(int8_t displacement_x, int8_t displacement_y) {
+  mouse_cursor->MoveRelative({displacement_x, displacement_y});
+}
+
+void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
+  bool intel_ehc_exist = false;
+  for (int i = 0; i < pci::num_device; ++i) {
+    if (pci::devices[i].class_code.Match(0x0cu, 0x03u, 0x20u) /* EHCI */ &&
+        0x8086 == pci::ReadVendorId(pci::devices[i])) {
+      intel_ehc_exist = true;
+      break;
+    }
+  }
+  if (!intel_ehc_exist) {
+    return;
+  }
+
+  uint32_t superspeed_ports = pci::ReadConfReg(xhc_dev, 0xdc); // USB3PRM
+  pci::WriteConfReg(xhc_dev, 0xd8, superspeed_ports); // USB3_PSSEN
+  uint32_t ehci2xhci_ports = pci::ReadConfReg(xhc_dev, 0xd4); // XUSB2PRM
+  pci::WriteConfReg(xhc_dev, 0xd0, ehci2xhci_ports); // XUSB2PR
+  Log(kDebug, "SwitchEhci2Xhci: SS = %02, xHCI = %02x\n",
+      superspeed_ports, ehci2xhci_ports);
 }
 
 extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
@@ -116,28 +118,87 @@ extern "C" void KernelMain(const FrameBufferConfig& frame_buffer_config) {
     *pixel_writer, kDesktopFGColor, kDesktopBGColor
   };
   printk("Welcome to MikanOS!\n");
+  SetLogLevel(kWarn);
 
-  for (int dy = 0; dy < kMouseCursorHeight; ++dy) {
-    for (int dx = 0; dx < kMouseCursorWidth; ++dx) {
-      if (mouse_cursor_shape[dy][dx] == '@') {
-        pixel_writer->Write(200 + dx, 100 + dy, {0, 0, 0});
-      } else if (mouse_cursor_shape[dy][dx] == '.') {
-        pixel_writer->Write(200 + dx, 100 + dy, {255, 255, 255});
-      }
-    }
-  }
+  mouse_cursor = new(mouse_cursor_buf) MouseCursor{
+    pixel_writer, kDesktopBGColor, {300, 200}
+  };
 
   auto err = pci::ScanAllBus();
-  printk("ScanAllBus: %s\n", err.Name());
+  Log(kDebug, "ScanAllBus: %s\n", err.Name());
 
   for (int i = 0; i < pci::num_device; ++i) {
     const auto& dev = pci::devices[i];
-    auto vendor_id = pci::ReadVendorId(dev.bus, dev.device, dev.function);
+    auto vendor_id = pci::ReadVendorId(dev);
     auto class_code = pci::ReadClassCode(dev.bus, dev.device, dev.function);
-    printk("%d.%d.%d: vend %04x, class %08x, head %02x\n",
+    Log(kDebug, "%d.%d.%d: vend %04x, class %08x, head %02x\n",
         dev.bus, dev.device, dev.function,
         vendor_id, class_code, dev.header_type);
   }
 
+  // Intel 製を優先して xHC を探す
+  pci::Device* xhc_dev = nullptr;
+  for (int i = 0; i < pci::num_device; ++i) {
+    if (pci::devices[i].class_code.Match(0x0cu, 0x03u, 0x30u)) {
+      xhc_dev = &pci::devices[i];
+
+      if (0x8086 == pci::ReadVendorId(*xhc_dev)) {
+        break;
+      }
+    }
+  }
+
+  if (xhc_dev) {
+    Log(kInfo, "xHC has been found: %d.%d.%d\n",
+        xhc_dev->bus, xhc_dev->device, xhc_dev->function);
+  }
+
+  // MMIOアドレスを読み出す
+  const WithError<uint64_t> xhc_bar = pci::ReadBar(*xhc_dev, 0);
+  Log(kDebug, "ReadBar: %s\n", xhc_bar.error.Name());
+  const uint64_t xhc_mmio_base = xhc_bar.value & ~static_cast<uint64_t>(0xf);
+  Log(kDebug, "xHC mmio_base = %08lx\n", xhc_mmio_base);
+
+  usb::xhci::Controller xhc{xhc_mmio_base};
+
+  // Intel製のxHCだった場合、USB3.0用の規格であるxHCIコントローラで制御するよう設定する
+  // Intel製のxHCは2種類の規格に対応する(1.USB2.0用の規格であるEHCIコントローラ, 2.USB3.0用の規格であるxHCIコントローラ)
+  if (0x8086 == pci::ReadVendorId(*xhc_dev)) {
+    SwitchEhci2Xhci(*xhc_dev);
+  }
+  {
+    auto err = xhc.Initialize();
+    Log(kDebug, "xhc.Initialize: %s\n", err.Name());
+  }
+
+  Log(kInfo, "xHC starting\n");
+  xhc.Run();
+
+  usb::HIDMouseDriver::default_observer = MouseObserver;
+
+  for (int i = 1; i <= xhc.MaxPorts(); ++i) {
+    auto port = xhc.PortAt(i);
+    Log(kDebug, "Port %d: IsConnected=%d\n", i, port.IsConnected());
+
+    if (port.IsConnected()) {
+      if (auto err = ConfigurePort(xhc, port)) {
+        Log(kError, "failed to configure port: %s at %s:%d\n",
+            err.Name(), err.File(), err.Line());
+        continue;
+      }
+    }
+  }
+
+  while (1) {
+    if (auto err = ProcessEvent(xhc)) {
+      Log(kError, "Error while ProcessEvent: %s at %s:%d\n",
+          err.Name(), err.File(), err.Line());
+    }
+  }
+
+  while (1) __asm__("hlt");
+}
+
+extern "C" void __cxa_pure_virtual() {
   while (1) __asm__("hlt");
 }

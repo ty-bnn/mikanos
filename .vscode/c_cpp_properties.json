@@ -4,16 +4,14 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/home/vscode/osbook/devenv/x86_64-elf/**",
-                "/usr/x86_64-linux-gnu/**",
-                "/home/vscode/edk2/**",
-                "/usr/include/**",
-                "/usr/lib/llvm-7/lib/clang/7.0.1/include"
+                "${HOME}/edk2/MdePkg/Include/**",
+                "${HOME}/osbook/devenv/x86_64-elf/include/**",
+                "/home/vscode/osbook/devenv/x86_64-elf/include/**"
             ],
             "defines": [],
-            "compilerPath": "/usr/bin/clang --target=x86_64-linux-gnu",
+            "compilerPath": "/usr/bin/clang",
             "cStandard": "c17",
-            "cppStandard": "c++14",
+            "cppStandard": "c++17",
             "intelliSenseMode": "linux-clang-x64"
         }
     ],
