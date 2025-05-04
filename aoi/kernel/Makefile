@@ -13,7 +13,7 @@ all: $(TARGET)
 
 .PHONY: clean
 clean:
-	rm -rf *.o
+	rm -rf *.o .*.d hankaku.bin kernel.elf disk.img mnt/
 
 kernel.elf: $(OBJS) Makefile
 	ld.lld $(LDFLAGS) -o kernel.elf $(OBJS) -lc
