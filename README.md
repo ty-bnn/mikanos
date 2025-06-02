@@ -4,7 +4,7 @@ Self-Made Operating System by Mikan OS!!
 
 ## How to build BootLoader
 
-1. `source edk2_setup.sh`
+1. `source edk2_setup.sh aoi`
 2. `cd $HOME/edk2`
 3. `build`
 

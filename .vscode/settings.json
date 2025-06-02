@@ -9,6 +9,7 @@
         "types.h": "c",
         "cstdarg": "cpp",
         "array": "cpp",
-        "system_error": "cpp"
+        "system_error": "cpp",
+        "memory_map.hpp": "c"
     }
 }

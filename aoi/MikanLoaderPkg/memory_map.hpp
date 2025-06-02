@@ -1,0 +1,1 @@
+#include "/workspaces/mikanos/aoi/kernel/memory_map.hpp"
