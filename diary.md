@@ -139,4 +139,8 @@ Windowの描画を高速化した。
 スクロール処理の時間を計測した。
 ただコンソールに文字を描画するのに比べてスクロールが走るとかなり時間がかかっていることが分かる。
 
-<img src="img/day09d.png" alt="day07a" width="300">
+<img src="img/day09d.png" alt="day09d" width="300">
+
+スクロール処理を高速化した。
+
+<img src="img/day09e.png" alt="day09e" width="300">
