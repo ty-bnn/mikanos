@@ -4,6 +4,7 @@ BitmapMemoryManager::BitmapMemoryManager()
   : alloc_map_{}, range_begin_{FrameID{0}}, range_end_{FrameID{kFrameCount}} {
 }
 
+// 連続でページフレームnum_frames分確保できる領域を探す
 WithError<FrameID> BitmapMemoryManager::Allocate(size_t num_frames) {
   size_t start_frame_id = range_begin_.ID();
   while (true) {
@@ -64,4 +65,19 @@ void BitmapMemoryManager::SetBit(FrameID frame, bool allocated) {
   } else {
     alloc_map_[line_index] &= ~(static_cast<MapLineType>(1) << bit_index);
   }
+}
+
+extern "C" caddr_t program_break, program_break_end;
+
+Error InitializeHeap(BitmapMemoryManager& memory_manager) {
+  const int kHeapFrames = 64 * 512; // ヒープに使用するフレーム数（128MiB）
+  const auto heap_start = memory_manager.Allocate(kHeapFrames);
+  if (heap_start.error) {
+    return heap_start.error;
+  }
+
+  // sbrkが使用するprogram_breakとprogranm_break_endに上で確保したヒープの領域を登録
+  program_break = reinterpret_cast<caddr_t>(heap_start.value.ID() * kBytesPerFrame);
+  program_break_end = program_break + kHeapFrames * kBytesPerFrame;
+  return MAKE_ERROR(Error::kSuccess);
 }
