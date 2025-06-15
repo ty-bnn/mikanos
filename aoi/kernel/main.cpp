@@ -33,6 +33,8 @@
 #include "window.hpp"
 #include "layer.hpp"
 
+#include "timer.hpp"
+
 /**
  * 予めPixelWriterを格納する領域を確保しておく
  * mallocなどの動的にメモリを確保する機能が使えないため予め静的に確保する必要がある
@@ -67,7 +69,11 @@ unsigned int mouse_layer_id;
 
 void MouseObserver(int8_t displacement_x, int8_t displacement_y) {
   layer_manager->MoveRelative(mouse_layer_id, {displacement_x, displacement_y});
+  StartLAPICTimer();
   layer_manager->Draw();
+  auto elapsed = LAPICTimerElapsed();
+  StopLAPICTimer();
+  printk("MouseObserver: elapsed = %u\n", elapsed);
 }
 
 void SwitchEhci2Xhci(const pci::Device& xhc_dev) {
@@ -135,6 +141,8 @@ extern "C" void KernelMainNewStack(
   console->SetWriter(pixel_writer);
   printk("Welcome to MikanOS!\n");
   SetLogLevel(kWarn);
+
+  InitializeLAPICTimer();
 
   SetupSegments();
 
